@@ -151,6 +151,16 @@
     font-size: 12px;
     color: #888;
   }
+  .hint {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 16px 0 0;
+    font-size: 13px;
+    color: #92400e;
+    line-height: 1.6;
+  }
 </style>
 </head>
 <body>
@@ -194,9 +204,15 @@
     <input type="file" id="fileInput" accept="image/*" multiple>
   </div>
 
+  <p class="hint" id="mobileHint" style="display:none">
+    📱 <b>iPhone / Android 使用提示</b><br>
+    點「儲存到相簿」會跳出分享選單，選「<b>儲存影像</b>」即可存進相簿。<br>
+    也可以直接 <b>長按照片 → 加入照片</b>。
+  </p>
+
   <div id="results" class="results"></div>
   <p class="empty-msg" id="emptyMsg">尚未上傳照片</p>
-  <button id="downloadAll" class="download-all" disabled>📦 下載全部</button>
+  <button id="downloadAll" class="download-all" disabled>💾 儲存全部</button>
 </div>
 
 <script>
@@ -212,6 +228,14 @@ const fontSizeInput = document.getElementById('fontSize');
 const sizeVal = document.getElementById('sizeVal');
 
 const processedPhotos = [];
+
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const canShareFiles = !!(navigator.canShare && navigator.share);
+const saveLabel = isMobile ? '💾 存到相簿' : '⬇️ 下載';
+if (isMobile) {
+  document.getElementById('mobileHint').style.display = 'block';
+  document.getElementById('downloadAll').textContent = '💾 全部存到相簿';
+}
 
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', e => handleFiles(e.target.files));
@@ -356,10 +380,10 @@ async function renderResults() {
       <img src="${photo.dataUrl}" alt="${photo.file.name}">
       <div class="photo-info">
         <span>📅 ${dateStr}</span>
-        <button class="download-btn">下載</button>
+        <button class="download-btn">${saveLabel}</button>
       </div>
     `;
-    card.querySelector('.download-btn').addEventListener('click', () => downloadOne(photo));
+    card.querySelector('.download-btn').addEventListener('click', () => saveOne(photo));
     results.appendChild(card);
   }
 }
@@ -369,18 +393,57 @@ async function reprocessAll() {
   await renderResults();
 }
 
-function downloadOne(photo) {
+async function dataUrlToFile(dataUrl, fileName) {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  return new File([blob], fileName, { type: 'image/jpeg' });
+}
+
+function legacyDownload(photo) {
   const a = document.createElement('a');
   a.href = photo.dataUrl;
   a.download = photo.outName;
   a.click();
 }
 
-downloadAllBtn.addEventListener('click', () => {
-  processedPhotos.forEach((p, i) => {
-    setTimeout(() => downloadOne(p), i * 150);
-  });
-});
+async function saveOne(photo) {
+  // Mobile path: use Web Share API → user picks "儲存影像" to save into Photos
+  if (canShareFiles) {
+    try {
+      const file = await dataUrlToFile(photo.dataUrl, photo.outName);
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: photo.outName });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return; // user cancelled share sheet
+      console.warn('share failed, falling back to download', e);
+    }
+  }
+  // Desktop / unsupported browser fallback
+  legacyDownload(photo);
+}
+
+async function saveAll() {
+  if (canShareFiles) {
+    try {
+      const files = await Promise.all(
+        processedPhotos.map(p => dataUrlToFile(p.dataUrl, p.outName))
+      );
+      if (navigator.canShare({ files })) {
+        await navigator.share({ files, title: '照片日期戳印' });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      console.warn('share-all failed, falling back', e);
+    }
+  }
+  // Fallback: trigger individual downloads
+  processedPhotos.forEach((p, i) => setTimeout(() => legacyDownload(p), i * 150));
+}
+
+downloadAllBtn.addEventListener('click', saveAll);
 </script>
 </body>
 </html>
